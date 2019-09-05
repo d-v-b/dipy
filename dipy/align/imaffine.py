@@ -64,6 +64,8 @@ _transform_method[(2, 'nearest')] = vf.transform_2d_affine_nn
 _transform_method[(3, 'nearest')] = vf.transform_3d_affine_nn
 _transform_method[(2, 'linear')] = vf.transform_2d_affine
 _transform_method[(3, 'linear')] = vf.transform_3d_affine
+# to make
+_transform_method([(2, 'linear_gpu')]) = dipy.core.interpolation.transform_2d_affine_gpu
 _number_dim_affine_matrix = 2
 
 
