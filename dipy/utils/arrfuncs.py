@@ -66,3 +66,19 @@ def pinv(a, rcond=1e-15):
     return np.einsum('...ij,...jk',
                      np.transpose(v, swap) * s[..., None, :],
                      np.transpose(u, swap))
+
+def rescale(arr):
+    """Rescale the values of an array to the interval [0, 1]
+
+    Parameters
+    ----------
+    arr : array_like
+          array to be rescaled
+
+    Returns
+    -------
+    rescaled : array_like
+               The values of arr rescaled to [0,1]
+    """
+    rescaled = (arr - arr.min()) / (arr.max() - arr.min())
+    return rescaled
