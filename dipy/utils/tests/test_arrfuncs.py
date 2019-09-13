@@ -4,7 +4,7 @@ import sys
 
 import numpy as np
 
-from dipy.utils.arrfuncs import as_native_array, pinv
+from dipy.utils.arrfuncs import as_native_array, pinv, rescale
 
 from numpy.testing import (assert_array_almost_equal, assert_equal,
                            assert_array_equal)
@@ -36,3 +36,10 @@ def test_pinv():
             for k in range(4):
                 assert_array_almost_equal(_pinv[i, j, k],
                                           np.linalg.pinv(arr[i, j, k]))
+
+
+def test_rescale():
+    arr = np.random.randn(10, 10, 10)
+    rescaled = rescale(arr)
+    assert rescaled.max() == 1.0
+    assert rescaled.min() == 0.0
