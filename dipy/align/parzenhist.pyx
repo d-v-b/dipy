@@ -204,7 +204,7 @@ class ParzenJointHistogram(object):
                     str(dim) + ' received'
             raise ValueError(msg)
         if not self.setup_called:
-            self.setup(static, moving, smask=None, mmask=None)
+            self.setup(static, moving, smask=smask, mmask=mmask)
 
         if dim == 2:
             _compute_pdfs_dense_2d(static, moving, smask, mmask, self.smin,

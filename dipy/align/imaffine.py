@@ -59,13 +59,150 @@ from dipy.align.scalespace import IsotropicScaleSpace
 from warnings import warn
 
 _interp_options = ['nearest', 'linear']
-_transform_method = {}
+_transform_method = dict()
 _transform_method[(2, 'nearest')] = vf.transform_2d_affine_nn
 _transform_method[(3, 'nearest')] = vf.transform_3d_affine_nn
 _transform_method[(2, 'linear')] = vf.transform_2d_affine
 _transform_method[(3, 'linear')] = vf.transform_3d_affine
 _number_dim_affine_matrix = 2
 
+
+def transform_centers_of_mass(static,
+                              static_grid2world,
+                              moving,
+                              moving_grid2world):
+    r""" Transformation to align the center of mass of the input images.
+
+    Parameters
+    ----------
+    static : array, shape (S, R, C)
+        static image
+    static_grid2world : array, shape (dim+1, dim+1)
+        the voxel-to-space transformation of the static image
+    moving : array, shape (S, R, C)
+        moving image
+    moving_grid2world : array, shape (dim+1, dim+1)
+        the voxel-to-space transformation of the moving image
+
+    Returns
+    -------
+    affine_map : instance of AffineMap
+        the affine transformation (translation only, in this case) aligning
+        the center of mass of the moving image towards the one of the static
+        image
+
+    """
+    dim = len(static.shape)
+    if static_grid2world is None:
+        static_grid2world = np.eye(dim + 1)
+    if moving_grid2world is None:
+        moving_grid2world = np.eye(dim + 1)
+    c_static = ndimage.measurements.center_of_mass(np.array(static))
+    c_static = static_grid2world.dot(c_static + (1,))
+    c_moving = ndimage.measurements.center_of_mass(np.array(moving))
+    c_moving = moving_grid2world.dot(c_moving + (1,))
+    transform = np.eye(dim + 1)
+    transform[:dim, dim] = (c_moving - c_static)[:dim]
+    affine_map = AffineMap(transform,
+                           static.shape, static_grid2world,
+                           moving.shape, moving_grid2world)
+    return affine_map
+
+
+def transform_geometric_centers(static,
+                                static_grid2world,
+                                moving,
+                                moving_grid2world):
+    r""" Transformation to align the geometric center of the input images.
+
+    With "geometric center" of a volume we mean the physical coordinates of
+    its central voxel
+
+    Parameters
+    ----------
+    static : array, shape (S, R, C)
+        static image
+    static_grid2world : array, shape (dim+1, dim+1)
+        the voxel-to-space transformation of the static image
+    moving : array, shape (S, R, C)
+        moving image
+    moving_grid2world : array, shape (dim+1, dim+1)
+        the voxel-to-space transformation of the moving image
+
+    Returns
+    -------
+    affine_map : instance of AffineMap
+        the affine transformation (translation only, in this case) aligning
+        the geometric center of the moving image towards the one of the static
+        image
+
+    """
+    dim = len(static.shape)
+    if static_grid2world is None:
+        static_grid2world = np.eye(dim + 1)
+    if moving_grid2world is None:
+        moving_grid2world = np.eye(dim + 1)
+    c_static = tuple((np.array(static.shape, dtype=np.float64)) * 0.5)
+    c_static = static_grid2world.dot(c_static + (1,))
+    c_moving = tuple((np.array(moving.shape, dtype=np.float64)) * 0.5)
+    c_moving = moving_grid2world.dot(c_moving + (1,))
+    transform = np.eye(dim + 1)
+    transform[:dim, dim] = (c_moving - c_static)[:dim]
+    affine_map = AffineMap(transform,
+                           static.shape, static_grid2world,
+                           moving.shape, moving_grid2world)
+    return affine_map
+
+
+def transform_origins(static,
+                      static_grid2world,
+                      moving,
+                      moving_grid2world):
+    r""" Transformation to align the origins of the input images.
+
+    With "origin" of a volume we mean the physical coordinates of
+    voxel (0,0,0)
+
+    Parameters
+    ----------
+    static : array, shape (S, R, C)
+        static image
+    static_grid2world : array, shape (dim+1, dim+1)
+        the voxel-to-space transformation of the static image
+    moving : array, shape (S, R, C)
+        moving image
+    moving_grid2world : array, shape (dim+1, dim+1)
+        the voxel-to-space transformation of the moving image
+
+    Returns
+    -------
+    affine_map : instance of AffineMap
+        the affine transformation (translation only, in this case) aligning
+        the origin of the moving image towards the one of the static
+        image
+
+    """
+    dim = len(static.shape)
+    if static_grid2world is None:
+        static_grid2world = np.eye(dim + 1)
+    if moving_grid2world is None:
+        moving_grid2world = np.eye(dim + 1)
+    c_static = static_grid2world[:dim, dim]
+    c_moving = moving_grid2world[:dim, dim]
+    transform = np.eye(dim + 1)
+    transform[:dim, dim] = (c_moving - c_static)[:dim]
+    affine_map = AffineMap(transform,
+                           static.shape,
+                           static_grid2world,
+                           moving.shape,
+                           moving_grid2world)
+    return affine_map
+
+
+_starting_transforms = dict()
+_starting_transforms['mass'] = transform_centers_of_mass
+_starting_transforms['centers'] = transform_geometric_centers
+_starting_transforms['voxel-origin'] = transform_origins
 
 class AffineInversionError(Exception):
     pass
@@ -77,8 +214,12 @@ class AffineInvalidValuesError(Exception):
 
 class AffineMap(object):
 
-    def __init__(self, affine, domain_grid_shape=None, domain_grid2world=None,
-                 codomain_grid_shape=None, codomain_grid2world=None):
+    def __init__(self,
+                 affine,
+                 domain_grid_shape=None,
+                 domain_grid2world=None,
+                 codomain_grid_shape=None,
+                 codomain_grid2world=None):
         """ AffineMap
 
         Implements an affine transformation whose domain is given by
@@ -245,9 +386,14 @@ class AffineMap(object):
                                           .format(format_spec,
                                                   allowed_formats_print_map))
 
-    def _apply_transform(self, image, interp='linear', image_grid2world=None,
-                         sampling_grid_shape=None, sampling_grid2world=None,
-                         resample_only=False, apply_inverse=False):
+    def _apply_transform(self,
+                         image,
+                         interp='linear',
+                         image_grid2world=None,
+                         sampling_grid_shape=None,
+                         sampling_grid2world=None,
+                         resample_only=False,
+                         apply_inverse=False):
         """Transform the input image applying this affine transform.
 
         This is a generic function to transform images using either this
@@ -359,8 +505,12 @@ class AffineMap(object):
         transformed = _transform_method[(dim, interp)](image, shape, comp)
         return transformed
 
-    def transform(self, image, interp='linear', image_grid2world=None,
-                  sampling_grid_shape=None, sampling_grid2world=None,
+    def transform(self,
+                  image,
+                  interp='linear',
+                  image_grid2world=None,
+                  sampling_grid_shape=None,
+                  sampling_grid2world=None,
                   resample_only=False):
         """Transform the input image from co-domain to domain space.
 
@@ -401,15 +551,21 @@ class AffineMap(object):
             the transformed image, sampled at the requested grid
 
         """
-        transformed = self._apply_transform(image, interp, image_grid2world,
+        transformed = self._apply_transform(image,
+                                            interp,
+                                            image_grid2world,
                                             sampling_grid_shape,
                                             sampling_grid2world,
                                             resample_only,
                                             apply_inverse=False)
         return np.array(transformed)
 
-    def transform_inverse(self, image, interp='linear', image_grid2world=None,
-                          sampling_grid_shape=None, sampling_grid2world=None,
+    def transform_inverse(self,
+                          image,
+                          interp='linear',
+                          image_grid2world=None,
+                          sampling_grid_shape=None,
+                          sampling_grid2world=None,
                           resample_only=False):
         """Transform the input image from domain to co-domain space.
 
@@ -497,8 +653,15 @@ class MutualInformationMetric(object):
         self.metric_val = None
         self.metric_grad = None
 
-    def setup(self, transform, static, moving, static_grid2world=None,
-              moving_grid2world=None, starting_affine=None):
+    def setup(self,
+              transform,
+              static,
+              moving,
+              static_grid2world=None,
+              moving_grid2world=None,
+              static_mask=None,
+              moving_mask=None,
+              starting_affine=None):
         r"""Prepare the metric to compute intensity densities and gradients.
 
         The histograms will be setup to compute probability densities of
@@ -521,6 +684,14 @@ class MutualInformationMetric(object):
         moving_grid2world : array (dim+1, dim+1)
             the grid-to-space transform of the moving image. The default is
             None, implying the spacing along all axes is 1.
+        static_mask : array
+            mask of static object being registered (a binary array with 1's
+            inside the object of interest and 0's along the background).
+            If None, the behaviour is equivalent to static_mask=ones_like(static)
+        moving_mask : array
+            mask of moving object being registered (a binary array with 1's
+            inside the object of interest and 0's along the background).
+            If None, the behaviour is equivalent to moving_mask=ones_like(static)
         starting_affine : array, shape (dim+1, dim+1), optional
             the pre-aligning matrix (an affine transform) that roughly aligns
             the moving image towards the static image. If None, no
@@ -533,7 +704,7 @@ class MutualInformationMetric(object):
         """
         n = transform.get_number_of_parameters()
         self.metric_grad = np.zeros(n, dtype=np.float64)
-        self.dim = len(static.shape)
+        self.dim = static.ndim
         if moving_grid2world is None:
             moving_grid2world = np.eye(self.dim + 1)
         if static_grid2world is None:
@@ -541,6 +712,17 @@ class MutualInformationMetric(object):
         self.transform = transform
         self.static = np.array(static).astype(np.float64)
         self.moving = np.array(moving).astype(np.float64)
+
+        if static_mask is None:
+            self.static_mask = np.ones_like(self.static)
+        else:
+            self.static_mask = static_mask
+
+        if moving_mask is None:
+            self.moving_mask = np.ones_like(self.moving)
+        else:
+            self.moving_mask = moving_mask
+
         self.static_grid2world = static_grid2world
         self.static_world2grid = npl.inv(static_grid2world)
         self.moving_grid2world = moving_grid2world
@@ -555,8 +737,11 @@ class MutualInformationMetric(object):
         if self.starting_affine is not None:
             P = self.starting_affine
 
-        self.affine_map = AffineMap(P, static.shape, static_grid2world,
-                                    moving.shape, moving_grid2world)
+        self.affine_map = AffineMap(P,
+                                    static.shape,
+                                    static_grid2world,
+                                    moving.shape,
+                                    moving_grid2world)
 
         if self.dim == 2:
             self.interp_method = interpolate_scalar_2d
@@ -584,7 +769,11 @@ class MutualInformationMetric(object):
             static_p = static_p[..., :self.dim]
             self.static_vals, inside = self.interp_method(static, static_p)
             self.static_vals = np.array(self.static_vals, dtype=np.float64)
-        self.histogram.setup(self.static, self.moving)
+
+        self.histogram.setup(self.static,
+                             self.moving,
+                             smask=self.static_mask,
+                             mmask=self.moving_mask)
 
     def _update_histogram(self):
         r"""Update the histogram according to the current affine transform.
@@ -700,8 +889,10 @@ class MutualInformationMetric(object):
                                          moving_values, pts, mgrad)
 
         # Call the cythonized MI computation with self.histogram fields
-        self.metric_val = compute_parzen_mi(H.joint, H.joint_grad,
-                                            H.smarginal, H.mmarginal,
+        self.metric_val = compute_parzen_mi(H.joint,
+                                            H.joint_grad,
+                                            H.smarginal,
+                                            H.mmarginal,
                                             grad)
 
     def distance(self, params):
@@ -878,8 +1069,13 @@ class AffineRegistration(object):
 
     __init__.__doc__ = __init__.__doc__ + docstring_addendum
 
-    def _init_optimizer(self, static, moving, transform, params0,
-                        static_grid2world, moving_grid2world,
+    def _init_optimizer(self,
+                        static,
+                        moving,
+                        transform,
+                        params0,
+                        static_grid2world,
+                        moving_grid2world,
                         starting_affine):
         r"""Initialize the registration optimizer.
 
@@ -927,24 +1123,15 @@ class AffineRegistration(object):
         if starting_affine is None:
             self.starting_affine = np.eye(self.dim + 1)
         elif isinstance(starting_affine, str):
-            if starting_affine == 'mass':
-                affine_map = transform_centers_of_mass(static,
-                                                       static_grid2world,
-                                                       moving,
-                                                       moving_grid2world)
+            try:
+                affine_map = _starting_transforms[starting_affine](static,
+                                                                   static_grid2world,
+                                                                   moving,
+                                                                   moving_grid2world)
                 self.starting_affine = affine_map.affine
-            elif starting_affine == 'voxel-origin':
-                affine_map = transform_origins(static, static_grid2world,
-                                               moving, moving_grid2world)
-                self.starting_affine = affine_map.affine
-            elif starting_affine == 'centers':
-                affine_map = transform_geometric_centers(static,
-                                                         static_grid2world,
-                                                         moving,
-                                                         moving_grid2world)
-                self.starting_affine = affine_map.affine
-            else:
-                raise ValueError('Invalid starting_affine strategy')
+
+            except KeyError:
+                print('Invalid starting_affine strategy')
         elif (isinstance(starting_affine, np.ndarray) and
               starting_affine.shape >= (self.dim, self.dim + 1)):
             self.starting_affine = starting_affine
@@ -981,9 +1168,18 @@ class AffineRegistration(object):
                                         static_spacing, self.ss_sigma_factor,
                                         False)
 
-    def optimize(self, static, moving, transform, params0,
-                 static_grid2world=None, moving_grid2world=None,
-                 starting_affine=None, ret_metric=False):
+    def optimize(self,
+                 static,
+                 moving,
+                 transform,
+                 params0,
+                 static_grid2world=None,
+                 moving_grid2world=None,
+                 static_mask=None,
+                 moving_mask=None,
+                 starting_affine=None,
+                 ret_metric=False):
+
         r""" Start the optimization process.
 
         Parameters
@@ -1076,9 +1272,14 @@ class AffineRegistration(object):
 
             current_moving = self.moving_ss.get_image(level)
             # Prepare the metric for iterations at this resolution
-            self.metric.setup(transform, current_static, current_moving,
+            self.metric.setup(transform,
+                              current_static,
+                              current_moving,
                               current_static_grid2world,
-                              current_moving_grid2world, self.starting_affine)
+                              current_moving_grid2world,
+                              None,
+                              None,
+                              self.starting_affine)
 
             # Optimize this level
             if self.options is None:
@@ -1108,126 +1309,3 @@ class AffineRegistration(object):
             return affine_map, opt.xopt, opt.fopt
         return affine_map
 
-
-def transform_centers_of_mass(static, static_grid2world,
-                              moving, moving_grid2world):
-    r""" Transformation to align the center of mass of the input images.
-
-    Parameters
-    ----------
-    static : array, shape (S, R, C)
-        static image
-    static_grid2world : array, shape (dim+1, dim+1)
-        the voxel-to-space transformation of the static image
-    moving : array, shape (S, R, C)
-        moving image
-    moving_grid2world : array, shape (dim+1, dim+1)
-        the voxel-to-space transformation of the moving image
-
-    Returns
-    -------
-    affine_map : instance of AffineMap
-        the affine transformation (translation only, in this case) aligning
-        the center of mass of the moving image towards the one of the static
-        image
-
-    """
-    dim = len(static.shape)
-    if static_grid2world is None:
-        static_grid2world = np.eye(dim + 1)
-    if moving_grid2world is None:
-        moving_grid2world = np.eye(dim + 1)
-    c_static = ndimage.measurements.center_of_mass(np.array(static))
-    c_static = static_grid2world.dot(c_static + (1,))
-    c_moving = ndimage.measurements.center_of_mass(np.array(moving))
-    c_moving = moving_grid2world.dot(c_moving + (1,))
-    transform = np.eye(dim + 1)
-    transform[:dim, dim] = (c_moving - c_static)[:dim]
-    affine_map = AffineMap(transform,
-                           static.shape, static_grid2world,
-                           moving.shape, moving_grid2world)
-    return affine_map
-
-
-def transform_geometric_centers(static, static_grid2world,
-                                moving, moving_grid2world):
-    r""" Transformation to align the geometric center of the input images.
-
-    With "geometric center" of a volume we mean the physical coordinates of
-    its central voxel
-
-    Parameters
-    ----------
-    static : array, shape (S, R, C)
-        static image
-    static_grid2world : array, shape (dim+1, dim+1)
-        the voxel-to-space transformation of the static image
-    moving : array, shape (S, R, C)
-        moving image
-    moving_grid2world : array, shape (dim+1, dim+1)
-        the voxel-to-space transformation of the moving image
-
-    Returns
-    -------
-    affine_map : instance of AffineMap
-        the affine transformation (translation only, in this case) aligning
-        the geometric center of the moving image towards the one of the static
-        image
-
-    """
-    dim = len(static.shape)
-    if static_grid2world is None:
-        static_grid2world = np.eye(dim + 1)
-    if moving_grid2world is None:
-        moving_grid2world = np.eye(dim + 1)
-    c_static = tuple((np.array(static.shape, dtype=np.float64)) * 0.5)
-    c_static = static_grid2world.dot(c_static + (1,))
-    c_moving = tuple((np.array(moving.shape, dtype=np.float64)) * 0.5)
-    c_moving = moving_grid2world.dot(c_moving + (1,))
-    transform = np.eye(dim + 1)
-    transform[:dim, dim] = (c_moving - c_static)[:dim]
-    affine_map = AffineMap(transform,
-                           static.shape, static_grid2world,
-                           moving.shape, moving_grid2world)
-    return affine_map
-
-
-def transform_origins(static, static_grid2world,
-                      moving, moving_grid2world):
-    r""" Transformation to align the origins of the input images.
-
-    With "origin" of a volume we mean the physical coordinates of
-    voxel (0,0,0)
-
-    Parameters
-    ----------
-    static : array, shape (S, R, C)
-        static image
-    static_grid2world : array, shape (dim+1, dim+1)
-        the voxel-to-space transformation of the static image
-    moving : array, shape (S, R, C)
-        moving image
-    moving_grid2world : array, shape (dim+1, dim+1)
-        the voxel-to-space transformation of the moving image
-
-    Returns
-    -------
-    affine_map : instance of AffineMap
-        the affine transformation (translation only, in this case) aligning
-        the origin of the moving image towards the one of the static
-        image
-
-    """
-    dim = len(static.shape)
-    if static_grid2world is None:
-        static_grid2world = np.eye(dim + 1)
-    if moving_grid2world is None:
-        moving_grid2world = np.eye(dim + 1)
-    c_static = static_grid2world[:dim, dim]
-    c_moving = moving_grid2world[:dim, dim]
-    transform = np.eye(dim + 1)
-    transform[:dim, dim] = (c_moving - c_static)[:dim]
-    affine_map = AffineMap(transform,
-                           static.shape, static_grid2world,
-                           moving.shape, moving_grid2world)
-    return affine_map

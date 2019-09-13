@@ -216,8 +216,12 @@ def test_affreg_all_transforms():
                                              None,
                                              options=None)
         x0 = trans.get_identity_parameters()
-        affine_map = affreg.optimize(static, moving, trans, x0,
-                                     static_g2w, moving_g2w)
+        affine_map = affreg.optimize(static=static,
+                                     moving=moving,
+                                     transform=trans,
+                                     params0=x0,
+                                     static_grid2world=static_g2w,
+                                     moving_grid2world=moving_g2w)
         transformed = affine_map.transform(moving)
         # Sum of absolute differences
         end_sad = np.abs(static - transformed).sum()

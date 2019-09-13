@@ -1,5 +1,5 @@
 import numpy as np
-import scipy as sp
+import scipy.ndimage as ndi
 from functools import reduce
 from operator import mul
 from dipy.core.ndindex import ndindex
@@ -295,10 +295,10 @@ def setup_random_transform(transform, rfactor, nslices=45, sigma=1):
         moving = np.zeros(shape=moving_slice.shape + (nslices,))
         moving[..., zero_slices:(2 * zero_slices)] = moving_slice[..., None]
 
-    moving = sp.ndimage.filters.gaussian_filter(moving, sigma)
+    moving = ndi.filters.gaussian_filter(moving, sigma).astype(np.float32)
 
     moving_g2w = np.eye(dim + 1)
-    mmask = np.ones_like(moving, dtype=np.int32)
+
 
     # Create a transform by slightly perturbing the identity parameters
     theta = transform.get_identity_parameters()
@@ -307,10 +307,12 @@ def setup_random_transform(transform, rfactor, nslices=45, sigma=1):
 
     M = transform.param_to_matrix(theta)
     shape = np.array(moving.shape, dtype=np.int32)
-    static = np.array(transform_method(moving.astype(np.float32), shape, M))
+    static = np.array(transform_method(moving, shape, M))
     static = static.astype(np.float64)
     static_g2w = np.eye(dim + 1)
+
     smask = np.ones_like(static, dtype=np.int32)
+    mmask = np.ones_like(moving, dtype=np.int32)
 
     return static, moving, static_g2w, moving_g2w, smask, mmask, M
 
