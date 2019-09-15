@@ -1,15 +1,18 @@
 from dipy.align import floating
+from dipy.utils.arrfuncs import rescale
 import numpy as np
 import numpy.linalg as npl
 import scipy.ndimage.filters as filters
 
 
 class ScaleSpace(object):
-    def __init__(self, image, num_levels,
+    def __init__(self,
+                 image,
+                 num_levels,
                  image_grid2world=None,
                  input_spacing=None,
                  sigma_factor=0.2,
-                 mask0=False):
+                 mask=None):
         r""" ScaleSpace
 
         Computes the Scale Space representation of an image. The scale space is
@@ -37,7 +40,7 @@ class ScaleSpace(object):
         sigma_factor : float, optional
             the smoothing factor to be used in the construction of the scale
             space. The default is 0.2
-        mask0 : Boolean, optional
+        mask : Boolean, optional
             if True, all smoothed images will be zero at all voxels that are
             zero in the input image. The default is False.
 
@@ -45,13 +48,11 @@ class ScaleSpace(object):
         self.dim = len(image.shape)
         self.num_levels = num_levels
         input_size = np.array(image.shape)
-        if mask0:
-            mask = np.asarray(image > 0, dtype=np.int32)
+        if mask is None:
+            mask = np.ones_like(image, dtype=np.int32)
 
-        # Normalize input image to [0,1]
-        img = (image - image.min())/(image.max() - image.min())
-        if mask0:
-            img *= mask
+        # Normalize input image to [0,1] and mask
+        img = rescale(image) * mask
 
         # The properties are saved in separate lists. Insert input image
         # properties at the first level of the scale space
@@ -93,12 +94,8 @@ class ScaleSpace(object):
             output_size = output_size.astype(np.int32)
             sigmas = sigma_factor * (output_spacing / input_spacing - 1.0)
 
-            # Filter along each direction with the appropriate sigma
-            filtered = filters.gaussian_filter(image, sigmas)
-            filtered = ((filtered - filtered.min()) /
-                        (filtered.max() - filtered.min()))
-            if mask0:
-                filtered *= mask
+            # Filter along each direction with the appropriate sigma and mask
+            filtered = rescale(filters.gaussian_filter(image, sigmas)) * mask
 
             # Add current level to the scale space
             self.images.append(filtered.astype(floating))
@@ -310,10 +307,13 @@ class ScaleSpace(object):
 
 
 class IsotropicScaleSpace(ScaleSpace):
-    def __init__(self, image, factors, sigmas,
+    def __init__(self,
+                 image,
+                 factors,
+                 sigmas,
                  image_grid2world=None,
                  input_spacing=None,
-                 mask0=False):
+                 mask=None):
         r""" IsotropicScaleSpace
 
         Computes the Scale Space representation of an image using isotropic
@@ -341,7 +341,7 @@ class IsotropicScaleSpace(ScaleSpace):
         input_spacing : array, shape (dim,), optional
             the spacing (voxel size) between voxels in physical space. The
             default if 1.0 along all axes.
-        mask0 : Boolean, optional
+        mask : Boolean, optional
             if True, all smoothed images will be zero at all voxels that are
             zero in the input image. The default is False.
         """
@@ -350,14 +350,12 @@ class IsotropicScaleSpace(ScaleSpace):
         if len(sigmas) != self.num_levels:
             raise ValueError("sigmas and factors must have the same length")
         input_size = np.array(image.shape)
-        if mask0:
-            mask = np.asarray(image > 0, dtype=np.int32)
+        if mask is None:
+            mask = np.ones_like(image, dtype=np.int32)
 
         # Normalize input image to [0,1]
-        img = ((image.astype(np.float64) - image.min()) /
-               (image.max() - image.min()))
-        if mask0:
-            img *= mask
+        img = rescale(image.astype(np.float64))
+        img = mask * img
 
         # The properties are saved in separate lists. Insert input image
         # properties at the first level of the scale space
@@ -408,10 +406,8 @@ class IsotropicScaleSpace(ScaleSpace):
             # Filter along each direction with the appropriate sigma
             filtered = filters.gaussian_filter(image.astype(np.float64),
                                                new_sigmas)
-            filtered = ((filtered.astype(np.float64) - filtered.min()) /
-                        (filtered.max() - filtered.min()))
-            if mask0:
-                filtered *= mask
+            filtered = rescale(filtered.astype(np.float64))
+            filtered = mask * filtered
 
             # Add current level to the scale space
             self.images.append(filtered.astype(floating))

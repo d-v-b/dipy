@@ -262,6 +262,8 @@ def test_affreg_defaults():
         level_iters = None
         static_grid2world = None
         moving_grid2world = None
+        static_mask = None
+        moving_mask = None
         for ss_sigma_factor in [1.0, None]:
             affreg = imaffine.AffineRegistration(metric,
                                                  level_iters,
@@ -270,9 +272,15 @@ def test_affreg_defaults():
                                                  'L-BFGS-B',
                                                  ss_sigma_factor,
                                                  options=None)
-            affine_map = affreg.optimize(static, moving, transform, x0,
-                                         static_grid2world, moving_grid2world,
-                                         starting_affine)
+            affine_map = affreg.optimize(static=static,
+                                         moving=moving,
+                                         transform=transform,
+                                         params0=x0,
+                                         static_grid2world=static_grid2world,
+                                         moving_grid2world=moving_grid2world,
+                                         static_mask=static_mask,
+                                         moving_mask=moving_mask,
+                                         starting_affine=starting_affine)
             transformed = affine_map.transform(moving)
             # Sum of absolute differences
             end_sad = np.abs(static - transformed).sum()

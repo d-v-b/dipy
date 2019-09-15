@@ -56,6 +56,8 @@ from dipy.align.parzenhist import (ParzenJointHistogram,
                                    compute_parzen_mi)
 from dipy.align.imwarp import (get_direction_and_spacings, ScaleSpace)
 from dipy.align.scalespace import IsotropicScaleSpace
+from dipy.utils.arrfuncs import rescale
+from collections import namedtuple
 from warnings import warn
 
 _interp_options = ['nearest', 'linear']
@@ -104,8 +106,10 @@ def transform_centers_of_mass(static,
     transform = np.eye(dim + 1)
     transform[:dim, dim] = (c_moving - c_static)[:dim]
     affine_map = AffineMap(transform,
-                           static.shape, static_grid2world,
-                           moving.shape, moving_grid2world)
+                           static.shape,
+                           static_grid2world,
+                           moving.shape,
+                           moving_grid2world)
     return affine_map
 
 
@@ -149,8 +153,10 @@ def transform_geometric_centers(static,
     transform = np.eye(dim + 1)
     transform[:dim, dim] = (c_moving - c_static)[:dim]
     affine_map = AffineMap(transform,
-                           static.shape, static_grid2world,
-                           moving.shape, moving_grid2world)
+                           static.shape,
+                           static_grid2world,
+                           moving.shape,
+                           moving_grid2world)
     return affine_map
 
 
@@ -606,7 +612,9 @@ class AffineMap(object):
             the transformed image, sampled at the requested grid
 
         """
-        transformed = self._apply_transform(image, interp, image_grid2world,
+        transformed = self._apply_transform(image,
+                                            interp,
+                                            image_grid2world,
                                             sampling_grid_shape,
                                             sampling_grid2world,
                                             resample_only,
@@ -1076,6 +1084,8 @@ class AffineRegistration(object):
                         params0,
                         static_grid2world,
                         moving_grid2world,
+                        static_mask,
+                        moving_mask,
                         starting_affine):
         r"""Initialize the registration optimizer.
 
@@ -1143,36 +1153,45 @@ class AffineRegistration(object):
         moving_direction, moving_spacing = \
             get_direction_and_spacings(moving_grid2world, self.dim)
 
-        static = ((static.astype(np.float64) - static.min()) /
-                  (static.max() - static.min()))
-        moving = ((moving.astype(np.float64) - moving.min()) /
-                  (moving.max() - moving.min()))
+        static = rescale(static.astype(np.float64))
+        moving = rescale(moving.astype(np.float64))
 
         # Build the scale space of the input images
         if self.use_isotropic:
-            self.moving_ss = IsotropicScaleSpace(moving, self.factors,
+            self.moving_ss = IsotropicScaleSpace(moving,
+                                                 self.factors,
                                                  self.sigmas,
                                                  moving_grid2world,
-                                                 moving_spacing, False)
+                                                 moving_spacing,
+                                                 mask=moving_mask)
 
-            self.static_ss = IsotropicScaleSpace(static, self.factors,
+            self.static_ss = IsotropicScaleSpace(static,
+                                                 self.factors,
                                                  self.sigmas,
                                                  static_grid2world,
-                                                 static_spacing, False)
-        else:
-            self.moving_ss = ScaleSpace(moving, self.levels, moving_grid2world,
-                                        moving_spacing, self.ss_sigma_factor,
-                                        False)
+                                                 static_spacing,
+                                                 mask=static_mask)
 
-            self.static_ss = ScaleSpace(static, self.levels, static_grid2world,
-                                        static_spacing, self.ss_sigma_factor,
-                                        False)
+        else:
+            self.moving_ss = ScaleSpace(moving,
+                                        self.levels,
+                                        moving_grid2world,
+                                        moving_spacing,
+                                        self.ss_sigma_factor,
+                                        mask=moving_mask)
+
+            self.static_ss = ScaleSpace(static,
+                                        self.levels,
+                                        static_grid2world,
+                                        static_spacing,
+                                        self.ss_sigma_factor,
+                                        mask=static_mask)
 
     def optimize(self,
                  static,
                  moving,
                  transform,
-                 params0,
+                 params0=None,
                  static_grid2world=None,
                  moving_grid2world=None,
                  static_mask=None,
@@ -1234,16 +1253,85 @@ class AffineRegistration(object):
             the value of the function at the optimal parameters.
 
         """
-        self._init_optimizer(static, moving, transform, params0,
-                             static_grid2world, moving_grid2world,
-                             starting_affine)
-        del starting_affine  # Now we must refer to self.starting_affine
+
+        # experimental: try collecting similar identical args into dicts
+        self.images = dict(static=static, moving=moving)
+        self.g2ws = dict(static=static_grid2world, moving=moving_grid2world)
+        if static_mask is None:
+            static_mask = np.ones_like(static)
+        if moving_mask is None:
+            moving_mask = np.ones_like(static)
+        self.masks = dict(static=static_mask, moving=moving_mask)
+        self.transform = transform
+        self.dim = static.ndim
+        self.nparams = transform.get_number_of_parameters()
+        self.scale_spaces = dict()
+        self.scale_space_directions = dict()
+        self.scale_space_spacings = dict()
+        self.transform = transform
+
+        # self._init_optimizer(static=static,
+        #                      moving=moving,
+        #                      transform=transform,
+        #                      params0=params0,
+        #                      static_grid2world=static_grid2world,
+        #                      moving_grid2world=moving_grid2world,
+        #                      static_mask=static_mask,
+        #                      moving_mask=moving_mask,
+        #                      starting_affine=starting_affine)
+        # del starting_affine  # Now we must refer to self.starting_affine
+
+        if params0 is None:
+            params0 = self.transform.get_identity_parameters()
+        self.params0 = params0
+        if starting_affine is None:
+            self.starting_affine = np.eye(self.dim + 1)
+        elif isinstance(starting_affine, str):
+            try:
+                affine_map = _starting_transforms[starting_affine](self.images['static'],
+                                                                   self.g2ws['static'],
+                                                                   self.images['moving'],
+                                                                   self.g2ws['moving'])
+                self.starting_affine = affine_map.affine
+
+            except KeyError:
+                print('Invalid starting_affine strategy')
+        # this comparison between tuples is weird
+        elif (isinstance(starting_affine, np.ndarray) and
+              starting_affine.shape >= (self.dim, self.dim + 1)):
+            self.starting_affine = starting_affine
+        else:
+            raise ValueError('Invalid starting_affine matrix')
+
+        # Extract information from affine matrices to create the scale space
+        for k in self.images.keys():
+            image_rescaled = rescale(self.images[k].astype(np.float64))
+            # directions is never used?
+            self.scale_space_directions[k], self.scale_space_spacings[k] = get_direction_and_spacings(self.g2ws[k],
+                                                                                                      self.dim)
+
+            if self.use_isotropic:
+                self.scale_spaces[k] = IsotropicScaleSpace(image_rescaled,
+                                                           self.factors,
+                                                           self.sigmas,
+                                                           self.g2ws[k],
+                                                           self.scale_space_spacings[k],
+                                                           self.masks[k])
+            else:
+                self.scale_spaces[k] = ScaleSpace(image_rescaled,
+                                                  self.levels,
+                                                  self.g2ws[k],
+                                                  self.scale_space_spacings[k],
+                                                  self.ss_sigma_factor,
+                                                  mask=self.masks[k])
+
 
         # Multi-resolution iterations
-        original_static_shape = self.static_ss.get_image(0).shape
-        original_static_grid2world = self.static_ss.get_affine(0)
-        original_moving_shape = self.moving_ss.get_image(0).shape
-        original_moving_grid2world = self.moving_ss.get_affine(0)
+        original_static_shape = self.scale_spaces['static'].images[0].shape
+        original_static_grid2world = self.scale_spaces['static'].affines[0]
+        original_moving_shape = self.scale_spaces['moving'].images[0].shape
+        original_moving_grid2world = self.scale_spaces['moving'].affines[0]
+
         affine_map = AffineMap(None,
                                original_static_shape,
                                original_static_grid2world,
@@ -1257,28 +1345,28 @@ class AffineRegistration(object):
                 print('Optimizing level %d [max iter: %d]' % (level, max_iter))
 
             # Resample the smooth static image to the shape of this level
-            smooth_static = self.static_ss.get_image(level)
-            current_static_shape = self.static_ss.get_domain_shape(level)
-            current_static_grid2world = self.static_ss.get_affine(level)
+            smooth_static = self.scale_spaces['static'].images[level]
+            current_static_shape = self.scale_spaces['static'].domain_shapes[level]
+            current_static_grid2world = self.scale_spaces['static'].affines[level]
             current_affine_map = AffineMap(None,
                                            current_static_shape,
                                            current_static_grid2world,
                                            original_static_shape,
                                            original_static_grid2world)
             current_static = current_affine_map.transform(smooth_static)
-
+            current_static_mask = current_affine_map.transform(self.masks['static'])
             # The moving image is full resolution
             current_moving_grid2world = original_moving_grid2world
 
-            current_moving = self.moving_ss.get_image(level)
+            current_moving = self.scale_spaces['moving'].images[level]
             # Prepare the metric for iterations at this resolution
-            self.metric.setup(transform,
+            self.metric.setup(self.transform,
                               current_static,
                               current_moving,
                               current_static_grid2world,
                               current_moving_grid2world,
-                              None,
-                              None,
+                              current_static_mask,
+                              self.masks['moving'],
                               self.starting_affine)
 
             # Optimize this level
@@ -1293,7 +1381,8 @@ class AffineRegistration(object):
 
             opt = Optimizer(self.metric.distance_and_gradient,
                             self.params0,
-                            method=self.method, jac=True,
+                            method=self.method,
+                            jac=True,
                             options=self.options)
             params = opt.xopt
 
