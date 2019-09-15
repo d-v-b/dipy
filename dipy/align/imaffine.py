@@ -70,9 +70,11 @@ _number_dim_affine_matrix = 2
 
 
 def transform_centers_of_mass(static,
-                              static_grid2world,
                               moving,
-                              moving_grid2world):
+                              static_grid2world,
+                              moving_grid2world,
+                              static_mask=None,
+                              moving_mask=None):
     r""" Transformation to align the center of mass of the input images.
 
     Parameters
@@ -99,9 +101,14 @@ def transform_centers_of_mass(static,
         static_grid2world = np.eye(dim + 1)
     if moving_grid2world is None:
         moving_grid2world = np.eye(dim + 1)
-    c_static = ndimage.measurements.center_of_mass(np.array(static))
+    if static_mask is None:
+        static_mask = np.ones_like(static)
+    if moving_mask is None:
+        moving_mask = np.ones_like(moving)
+
+    c_static = ndimage.measurements.center_of_mass(np.array(static) * static_mask)
     c_static = static_grid2world.dot(c_static + (1,))
-    c_moving = ndimage.measurements.center_of_mass(np.array(moving))
+    c_moving = ndimage.measurements.center_of_mass(np.array(moving) * moving_mask)
     c_moving = moving_grid2world.dot(c_moving + (1,))
     transform = np.eye(dim + 1)
     transform[:dim, dim] = (c_moving - c_static)[:dim]
@@ -114,9 +121,11 @@ def transform_centers_of_mass(static,
 
 
 def transform_geometric_centers(static,
-                                static_grid2world,
                                 moving,
-                                moving_grid2world):
+                                static_grid2world,
+                                moving_grid2world,
+                                static_mask=None,
+                                moving_mask=None):
     r""" Transformation to align the geometric center of the input images.
 
     With "geometric center" of a volume we mean the physical coordinates of
@@ -161,9 +170,11 @@ def transform_geometric_centers(static,
 
 
 def transform_origins(static,
-                      static_grid2world,
                       moving,
-                      moving_grid2world):
+                      static_grid2world,
+                      moving_grid2world,
+                      static_mask=None,
+                      moving_mask=None):
     r""" Transformation to align the origins of the input images.
 
     With "origin" of a volume we mean the physical coordinates of
@@ -1288,14 +1299,17 @@ class AffineRegistration(object):
             self.starting_affine = np.eye(self.dim + 1)
         elif isinstance(starting_affine, str):
             try:
-                affine_map = _starting_transforms[starting_affine](self.images['static'],
-                                                                   self.g2ws['static'],
-                                                                   self.images['moving'],
-                                                                   self.g2ws['moving'])
+                affine_map = _starting_transforms[starting_affine](static=self.images['static'],
+                                                                   static_grid2world=self.g2ws['static'],
+                                                                   static_mask=self.masks['static'],
+                                                                   moving=self.images['moving'],
+                                                                   moving_grid2world=self.g2ws['moving'],
+                                                                   moving_mask = self.masks['moving'])
                 self.starting_affine = affine_map.affine
 
-            except KeyError:
-                print('Invalid starting_affine strategy')
+            except KeyError as ke:
+                raise ValueError('Invalid starting_affine strategy') from ke
+
         # this comparison between tuples is weird
         elif (isinstance(starting_affine, np.ndarray) and
               starting_affine.shape >= (self.dim, self.dim + 1)):
