@@ -1753,6 +1753,94 @@ def transform_2d_affine(floating[:, :] image, int[:] ref_shape,
     return np.asarray(out)
 
 
+def transform_2d_affine_mask(floating[:, :] image,
+                             int[:] ref_shape,
+                             int[:,:] mask,
+                             double[:, :] affine=None):
+    r"""Transforms a 2D image by an affine transform with bilinear interp.
+
+    Deforms the input image under the given affine transformation using
+    bi-linear interpolation. The user-supplied mask defines the pixel values in the
+    input image that will be transformed. The shape of the resulting image
+    is given by ref_shape. If the affine matrix is None, it is taken as the
+    identity.
+
+    Parameters
+    ----------
+    image : array, shape (R, C)
+        the input image to be transformed
+    ref_shape : array, shape (2,)
+        the shape of the resulting image
+    mask : array, shape (R, C)
+        a mask that determines which points in the input image will transformed.
+    affine : array, shape (3, 3)
+        the affine transform to be applied
+
+    Returns
+    -------
+    out : array, shape (R', C')
+        the transformed image
+
+    Notes
+    -----
+    The reason it is necessary to provide the intended shape of the resulting
+    image is because the affine transformation is defined on all R^{2}
+    but we must sample a finite lattice. Also the resulting shape may not be
+    necessarily equal to the input shape, unless we are interested on
+    endomorphisms only and not general diffeomorphisms.
+    """
+    cdef:
+        cnp.npy_intp nrows = ref_shape[0]
+        cnp.npy_intp ncols = ref_shape[1]
+        cnp.npy_intp nrVol = image.shape[0]
+        cnp.npy_intp ncVol = image.shape[1]
+        cnp.npy_intp i, j, ii, jj, i_m, j_m
+        double dii, djj, tmp0
+        double alpha, beta, calpha, cbeta
+        floating[:, :] out = np.zeros(shape=(nrows, ncols),
+                                      dtype=np.asarray(image).dtype)
+
+    if not is_valid_affine(affine, 2):
+        raise ValueError("Invalid affine transform matrix")
+
+    with nogil:
+        for i in range(nrows):
+            for j in range(ncols):
+                if affine is not None:
+                    dii = _apply_affine_2d_x0(i, j, 1, affine)
+                    djj = _apply_affine_2d_x1(i, j, 1, affine)
+                else:
+                    dii = i
+                    djj = j
+
+                # indices for the mask
+                i_m = <cnp.npy_intp> dii
+                j_m = <cnp.npy_intp> djj
+
+                if i_m > mask.shape[0] - 1:
+                    i_m = mask.shape[0] -1
+
+                elif i_m < 0:
+                    i_m = 0
+
+                if j_m > mask.shape[1] - 1:
+                    j_m = mask.shape[1]
+
+                elif j_m < 0:
+                    j_m = 0
+
+                if mask[i_m, j_m] >= 1:
+                   _interpolate_scalar_2d[floating](image,
+                                                    dii,
+                                                    djj,
+                                                    &out[i, j])
+                else:
+                    out[i,j] = 0.0
+
+    return np.asarray(out)
+
+
+
 def warp_2d_nn(number[:, :] image, floating[:, :, :] d1,
                double[:, :] affine_idx_in=None,
                double[:, :] affine_idx_out=None,
